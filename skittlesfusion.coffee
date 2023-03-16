@@ -88,9 +88,10 @@ setModel = (model) ->
 img2img = (imageBuffer, prompt) ->
   return new Promise (resolve, reject) ->
     denoisingStrength = 0.5
-    if matches = prompt.match(/^\[([^\]]+)\]\s+(.*)/)
+    if matches = prompt.match(/^\[([^\]]+)\](.*)/)
       denoisingStrength = parseFloat(matches[1])
       prompt = matches[2]
+      prompt = prompt.replace(/^[, ]+/, "")
     console.log "denoisingStrength: #{denoisingStrength}, prompt \"#{prompt}\""
 
     png = PNG.sync.read(imageBuffer)
