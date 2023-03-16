@@ -9,5 +9,6 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "pngjs": "^7.0.0"
   }
 }
