@@ -200,6 +200,8 @@ img2img = (imageBuffer, prompt) ->
         data = null
         try
           data = JSON.parse(str)
+          delete params["init_images"]
+          delete params["include_init_images"]
           data.skittlesparams = JSON.stringify(params)
         catch
           console.log "Bad JSON: #{str}"
