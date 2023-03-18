@@ -289,7 +289,12 @@ main = ->
   console.log config
 
   loop
-    box = await poboxPull('diffusion')
+    try
+      box = await poboxPull('diffusion')
+    catch e
+      console.log "poboxPull ate itself, waiting 5 seconds:", e
+      await sleep(5000)
+      continue
     for req in box
       console.log "Processing: ", req
       await diffusion(req)
