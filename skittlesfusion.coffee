@@ -30,7 +30,7 @@ paramConfig =
   steps:
     default: 40
     min: 1
-    max: 50
+    max: 100
   cfg_scale:
     default: 7
     min: 1
