@@ -310,7 +310,52 @@ txt2img = (prompt) ->
     req.write(JSON.stringify(params))
     req.end()
 
+syntax = (req, reason) ->
+  output = ""
+
+  if reason?
+    output += "**Error**: $reason\n\n"
+  else
+    output += "Skittles Stable Diffusion!\n\n";
+
+  output += "Available models:\n"
+  for trigger, model of config.models
+    output += " * **#sd #{trigger}** - _#{model.desc}_\n"
+
+  output += "\nSyntax:\n\`\`\`\n"
+  output += "#sd MODELNAME some prompt\n"
+  output += "#sd MODELNAME [steps 10 cfg 3] some prompt\n"
+  output += "#sd MODELNAME some prompt || some negative prompt\n"
+  output += "#sd MODELNAME [steps 10 cfg 3] some prompt || some negative prompt\n"
+  output += "\`\`\`\n"
+  output += "**Attach an image** to your request to use it as an input!\n"
+  output += "\nTune params by putting pairs inside \`[]\` (see above).\n"
+  output += "Get the full list of tunable parameters by asking for the config with **#sdconfig**\n"
+  output += "\n"
+
+  message = {
+    channel: req.channel
+    tag: req.tag
+    text: output
+  }
+  await poboxPush 'skittles', message
+  return true
+
 diffusion = (req) ->
+  console.log "diffusion(#{JSON.stringify(req)})"
+  matches = req.prompt.match(/^(\S+)\s*(.*)/)
+  if not matches?
+    return await syntax(req)
+  modelName = matches[1]
+  prompt = matches[2]
+
+  modelInfo = config.models[modelName]
+  if not modelInfo?
+    return await syntax(req, "No model by the name \"#{modelName}\"")
+  model = modelInfo.model
+  if modelInfo.suffix?
+    prompt += ", #{modelInfo.suffix}"
+
   imageType = 'image/png'
   imageBuffer = null
   if req.image?
@@ -322,24 +367,23 @@ diffusion = (req) ->
     imageBuffer = await downloadUrl(req.image)
     console.log "imageBuffer[#{imageBuffer.length}][#{imageType}]: #{req.image}"
 
-  console.log "Configuring model: #{req.model}"
-  await setModel(req.model)
+  console.log "Configuring model: #{model}"
+  await setModel(model)
 
   message = {
     channel: req.channel
     tag: req.tag
   }
-  message.text = "Started [#{req.model}]"
+  message.text = "Started [#{model}]"
   await poboxPush 'skittles', message
 
   startTime = +new Date()
   if imageBuffer?
-    console.log "img2img[#{imageBuffer.length}]: #{req.prompt}"
-    # fs.writeFileSync("curious.html", "<img src=\"data:#{imageType};base64," + imageBuffer.toString('base64') + "\">")
-    result = await img2img(imageType, imageBuffer, req.prompt)
+    console.log "img2img[#{imageBuffer.length}]: #{prompt}"
+    result = await img2img(imageType, imageBuffer, prompt)
   else
-    console.log "txt2img: #{req.prompt}"
-    result = await txt2img(req.prompt)
+    console.log "txt2img: #{prompt}"
+    result = await txt2img(prompt)
   endTime = +new Date()
   timeTaken = endTime - startTime
 
@@ -353,10 +397,10 @@ diffusion = (req) ->
 
   if result? and result.images? and result.images.length > 0
     console.log "Received #{result.images.length} images..."
-    message.text = "Complete [#{req.model}][#{(timeTaken/1000).toFixed(2)}s]: `#{JSON.stringify(result.skittlesparams)}`\n"
+    message.text = "Complete [#{model}][#{(timeTaken/1000).toFixed(2)}s]: `#{JSON.stringify(result.skittlesparams)}`\n"
     message.images = result.images
   else
-    message.text = "**FAILED**: [#{req.model}] #{req.prompt}"
+    message.text = "**FAILED**: [#{model}] #{prompt}"
 
   console.log "Replying: [#{message.channel}][#{message.tag}][#{message.text}][#{message.image?.length}]"
   await poboxPush 'skittles', message
@@ -393,7 +437,6 @@ queryConfig = (req) ->
         o += "  Range  : [#{pc.min}, #{pc.max}]\n"
 
   o += "```"
-  #```\n#{JSON.stringify(paramAliases, null, 2)}\n#{JSON.stringify(paramConfig, null, 2)}\n```"
 
   message.text = o
 
@@ -419,6 +462,6 @@ main = ->
       else
         await diffusion(req)
 
-    await sleep(5000)
+    await sleep(3000)
 
 main()

@@ -1,0 +1,12 @@
+{
+    "secret": "YOUR_POBOX_SECRET",
+    "host": "your.pobox.host",
+
+    "models": {
+        "modi": {
+            "desc": "Disney (Modern)",
+            "model": "moDi-v1-pruned",
+            "suffix": "modern disney style"
+        }
+    }
+}
