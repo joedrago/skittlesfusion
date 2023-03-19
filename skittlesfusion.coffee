@@ -20,6 +20,8 @@ paramAliases =
   h: "height"
   sampler: "sampler_name"
   samp: "sampler_name"
+  count: "batch_size"
+  batch: "batch_size"
 
 paramConfig =
   width:
@@ -53,6 +55,11 @@ paramConfig =
     default: -1
     min: -1
     max: 2147483647
+  batch_size:
+    description: "How many images to generate"
+    default: 1
+    min: 1
+    max: 9
   sampler_name:
     description: "Which sampler to use. No, I don't understand it either."
     default: "DPM++ 2M Karras"
@@ -318,6 +325,13 @@ diffusion = (req) ->
   console.log "Configuring model: #{req.model}"
   await setModel(req.model)
 
+  message = {
+    channel: req.channel
+    tag: req.tag
+  }
+  message.text = "Started [#{req.model}]"
+  await poboxPush 'skittles', message
+
   startTime = +new Date()
   if imageBuffer?
     console.log "img2img[#{imageBuffer.length}]: #{req.prompt}"
@@ -328,11 +342,6 @@ diffusion = (req) ->
     result = await txt2img(req.prompt)
   endTime = +new Date()
   timeTaken = endTime - startTime
-
-  message = {
-    channel: req.channel
-    tag: req.tag
-  }
 
   try
     outputSeed = JSON.parse(result.info).seed
@@ -345,7 +354,7 @@ diffusion = (req) ->
   if result? and result.images? and result.images.length > 0
     console.log "Received #{result.images.length} images..."
     message.text = "Complete [#{req.model}][#{(timeTaken/1000).toFixed(2)}s]: `#{JSON.stringify(result.skittlesparams)}`\n"
-    message.image = result.images[0]
+    message.images = result.images
   else
     message.text = "**FAILED**: [#{req.model}] #{req.prompt}"
 
