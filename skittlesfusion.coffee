@@ -22,12 +22,39 @@ paramAliases =
   samp: "sampler_name"
 
 paramConfig =
+  width:
+    description: "Output image width"
+    default: 512
+    min: 128
+    max: 1024
+  height:
+    description: "Output image height"
+    default: 512
+    min: 128
+    max: 1024
+  steps:
+    description: "How many times to re-run the model on the output image"
+    default: 40
+    min: 1
+    max: 100
+  cfg_scale:
+    description: "Classifier Free Guidance scale: How strongly the image should conform to the prompt"
+    default: 7
+    min: 1
+    max: 30
   denoising_strength:
+    description: "How closely to match the input image. Low numbers match the image strongly, high numbers throw most of it away"
     default: 0.5
     min: 0.0
     max: 1.0
     float: true
+  seed:
+    description: "Random seed. Leave at -1 to keep it random, or use the previous seed to recreate the last image"
+    default: -1
+    min: -1
+    max: 2147483647
   sampler_name:
+    description: "Which sampler to use. No, I don't understand it either."
     default: "DPM++ 2M Karras"
     enum: [
       "DDIM"
@@ -50,35 +77,29 @@ paramConfig =
       "LMS"
       "PLMS"
     ]
-  seed:
-    default: -1
-    min: -1
-    max: 2147483647
-  steps:
-    default: 40
-    min: 1
-    max: 100
-  cfg_scale:
-    default: 7
-    min: 1
-    max: 30
-  width:
-    default: 512
-    min: 128
-    max: 1024
-  height:
-    default: 512
-    min: 128
-    max: 1024
 
-parseParams = (raw) ->
-  params = {}
+parseParams = (prompt) ->
+  rawParams = ""
+  if matches = prompt.match(/^\[([^\]]+)\](.*)/)
+    rawParams = matches[1]
+    prompt = matches[2]
+    prompt = prompt.replace(/^[, ]+/, "")
+
+  posNeg = prompt.split(/\|\|/)
+  if posNeg.length > 1
+    params =
+      prompt: posNeg[0].trim()
+      negative_prompt: posNeg[1].trim()
+  else
+    params =
+      prompt: prompt
+
   for name,pc of paramConfig
     params[name] = pc.default
   # console.log params
 
   keyName = "denoising_strength"
-  pieces = raw.split(/[:,\s]+/)
+  pieces = rawParams.split(/[:,\s]+/)
   # console.log pieces
   for piece in pieces
     v = parseFloat(piece)
@@ -105,6 +126,9 @@ parseParams = (raw) ->
         keyName = null
 
   return params
+
+pad = (s, count) ->
+  return ("                   " + s).slice(-1 * count)
 
 sleep = (ms) ->
   return new Promise (resolve, reject) ->
@@ -194,13 +218,7 @@ setModel = (model) ->
 
 img2img = (imageType, imageBuffer, prompt) ->
   return new Promise (resolve, reject) ->
-    rawParams = ""
-    if matches = prompt.match(/^\[([^\]]+)\](.*)/)
-      rawParams = matches[1]
-      prompt = matches[2]
-      prompt = prompt.replace(/^[, ]+/, "")
-    console.log "rawParams: \"#{rawParams}\", prompt \"#{prompt}\""
-    params = parseParams(rawParams)
+    params = parseParams(prompt)
 
     if imageType == 'image/png'
       png = PNG.sync.read(imageBuffer)
@@ -223,7 +241,6 @@ img2img = (imageType, imageBuffer, prompt) ->
 
 
     params.include_init_images = true
-    params.prompt = prompt
     console.log "Params: ", params
     params.init_images = [
       "data:image/png;base64," + imageBuffer.toString('base64')
@@ -246,7 +263,7 @@ img2img = (imageType, imageBuffer, prompt) ->
           data = JSON.parse(str)
           delete params["init_images"]
           delete params["include_init_images"]
-          data.skittlesparams = JSON.stringify(params)
+          data.skittlesparams = params
         catch
           console.log "Bad JSON: #{str}"
           data = []
@@ -257,16 +274,9 @@ img2img = (imageType, imageBuffer, prompt) ->
 
 txt2img = (prompt) ->
   return new Promise (resolve, reject) ->
-    rawParams = ""
-    if matches = prompt.match(/^\[([^\]]+)\](.*)/)
-      rawParams = matches[1]
-      prompt = matches[2]
-      prompt = prompt.replace(/^[, ]+/, "")
-    console.log "rawParams: \"#{rawParams}\", prompt \"#{prompt}\""
-    params = parseParams(rawParams)
+    params = parseParams(prompt)
     params.width = Math.floor(params.width / 4) * 4
     params.height = Math.floor(params.height / 4) * 4
-    params.prompt = prompt
     console.log "Params: ", params
 
     req = http.request {
@@ -284,7 +294,7 @@ txt2img = (prompt) ->
         data = null
         try
           data = JSON.parse(str)
-          data.skittlesparams = JSON.stringify(params)
+          data.skittlesparams = params
         catch
           console.log "Bad JSON: #{str}"
           data = []
@@ -324,9 +334,17 @@ diffusion = (req) ->
     tag: req.tag
   }
 
+  try
+    outputSeed = JSON.parse(result.info).seed
+  catch
+    console.log "naw"
+    outputSeed = -1
+
+  result.skittlesparams.seed = outputSeed
+
   if result? and result.images? and result.images.length > 0
     console.log "Received #{result.images.length} images..."
-    message.text = "Complete[#{req.model}][#{(timeTaken/1000).toFixed(2)}s]: `#{result.skittlesparams}`\n"
+    message.text = "Complete [#{req.model}][#{(timeTaken/1000).toFixed(2)}s]: `#{JSON.stringify(result.skittlesparams)}`\n"
     message.image = result.images[0]
   else
     message.text = "**FAILED**: [#{req.model}] #{req.prompt}"
@@ -334,6 +352,46 @@ diffusion = (req) ->
   console.log "Replying: [#{message.channel}][#{message.tag}][#{message.text}][#{message.image?.length}]"
   await poboxPush 'skittles', message
   console.log "Reply complete."
+
+queryConfig = (req) ->
+  message = {
+    channel: req.channel
+    tag: req.tag
+  }
+
+  o = "```\n"
+  o += "Skittles SD Worker Config\n";
+  o += "-------------------------\n";
+
+  for pcName, pc of paramConfig
+    pcAliases = []
+    for paName, pa of paramAliases
+      if pcName == pa
+        pcAliases.push paName
+
+    o += "\n* #{pcName} - #{pc.description}\n"
+    if pcAliases.length > 0
+      o += "  Aliases: #{pcAliases.join(', ')}\n"
+    o += "  Default: #{pc.default}\n"
+    if pc.enum?
+      o += "  Choices: (supply the number)\n"
+      for pcChoice, pcChoiceIndex in pc.enum
+        o += "    #{pad(pcChoiceIndex, 2)}: #{pcChoice}\n"
+    else if pc.min? and pc.max?
+      if pc.float?
+        o += "  Range  : [#{pc.min.toFixed(1)}, #{pc.max.toFixed(1)}]\n"
+      else
+        o += "  Range  : [#{pc.min}, #{pc.max}]\n"
+
+  o += "```"
+  #```\n#{JSON.stringify(paramAliases, null, 2)}\n#{JSON.stringify(paramConfig, null, 2)}\n```"
+
+  message.text = o
+
+  console.log "Config Replying: [#{message.channel}][#{message.tag}][#{message.text.length}]"
+  await poboxPush 'skittles', message
+  console.log "Config Reply complete."
+
 main = ->
   config = JSON.parse(fs.readFileSync("skittlesfusion.json", "utf8"))
   console.log config
@@ -347,7 +405,10 @@ main = ->
       continue
     for req in box
       console.log "Processing: ", req
-      await diffusion(req)
+      if req.config?
+        await queryConfig(req)
+      else
+        await diffusion(req)
 
     await sleep(5000)
 
