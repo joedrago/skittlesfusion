@@ -1,7 +1,9 @@
 fs = require 'fs'
 http = require 'http'
 https = require 'https'
+path = require 'path'
 PNG = require('pngjs').PNG
+JPEG = require 'jpeg-js'
 
 config = {}
 
@@ -16,6 +18,8 @@ paramAliases =
   step: "steps"
   w: "width"
   h: "height"
+  sampler: "sampler_name"
+  samp: "sampler_name"
 
 paramConfig =
   denoising_strength:
@@ -23,6 +27,29 @@ paramConfig =
     min: 0.0
     max: 1.0
     float: true
+  sampler_name:
+    default: "DPM++ 2M Karras"
+    enum: [
+      "DDIM"
+      "DPM adaptive"
+      "DPM fast"
+      "DPM++ 2M Karras"
+      "DPM++ 2M"
+      "DPM++ 2S a Karras"
+      "DPM++ 2S a"
+      "DPM++ SDE Karras"
+      "DPM++ SDE"
+      "DPM2 a Karras"
+      "DPM2 a"
+      "DPM2 Karras"
+      "DPM2"
+      "Euler a"
+      "Euler"
+      "Heun"
+      "LMS Karras"
+      "LMS"
+      "PLMS"
+    ]
   seed:
     default: -1
     min: -1
@@ -56,12 +83,18 @@ parseParams = (raw) ->
   for piece in pieces
     v = parseFloat(piece)
     if keyName? and not isNaN(v)
-      if paramConfig[keyName].min? and v < paramConfig[keyName].min
-        v = paramConfig[keyName].min
-      if paramConfig[keyName].max? and v > paramConfig[keyName].max
-        v = paramConfig[keyName].max
-      if not paramConfig[keyName].float
+      if paramConfig[keyName].enum?
         v = Math.round(v)
+        if (v < 0) or (v > paramConfig[keyName].enum.length - 1)
+          v = 0
+        v = paramConfig[keyName].enum[v]
+      else
+        if paramConfig[keyName].min? and v < paramConfig[keyName].min
+          v = paramConfig[keyName].min
+        if paramConfig[keyName].max? and v > paramConfig[keyName].max
+          v = paramConfig[keyName].max
+        if not paramConfig[keyName].float
+          v = Math.round(v)
       params[keyName] = v
       keyName = null
     else
@@ -159,7 +192,7 @@ setModel = (model) ->
     }))
     req.end()
 
-img2img = (imageBuffer, prompt) ->
+img2img = (imageType, imageBuffer, prompt) ->
   return new Promise (resolve, reject) ->
     rawParams = ""
     if matches = prompt.match(/^\[([^\]]+)\](.*)/)
@@ -169,14 +202,25 @@ img2img = (imageBuffer, prompt) ->
     console.log "rawParams: \"#{rawParams}\", prompt \"#{prompt}\""
     params = parseParams(rawParams)
 
-    png = PNG.sync.read(imageBuffer)
-    pngAspect = png.width / png.height
-    if pngAspect < 1
+    if imageType == 'image/png'
+      png = PNG.sync.read(imageBuffer)
+      imageWidth = png.width
+      imageHeight = png.height
+    else
+      # jpeg
+      rawjpeg = JPEG.decode(imageBuffer)
+      imageWidth = rawjpeg.width
+      imageHeight = rawjpeg.height
+
+    imageAspect = imageWidth / imageHeight
+    console.log "Decoded image [#{imageType}] #{imageWidth}x#{imageHeight} (#{imageAspect})"
+    if imageAspect < 1
       params.height = Math.floor(params.height / 4) * 4
-      params.width = Math.floor(params.height * pngAspect / 4) * 4
+      params.width = Math.floor(params.height * imageAspect / 4) * 4
     else
       params.width = Math.floor(params.width / 4) * 4
-      params.height = Math.floor(params.width / pngAspect / 4) * 4
+      params.height = Math.floor(params.width / imageAspect / 4) * 4
+
 
     params.include_init_images = true
     params.prompt = prompt
@@ -250,10 +294,16 @@ txt2img = (prompt) ->
     req.end()
 
 diffusion = (req) ->
+  imageType = 'image/png'
   imageBuffer = null
   if req.image?
+    url = new URL(req.image)
+    pieces = path.parse(url.pathname)
+    if (pieces.ext == '.jpg') or (pieces.ext == '.jpeg')
+      imageType = 'image/jpeg'
+    console.log "imageType: #{imageType}"
     imageBuffer = await downloadUrl(req.image)
-    console.log "imageBuffer[#{imageBuffer.length}]: #{req.image}"
+    console.log "imageBuffer[#{imageBuffer.length}][#{imageType}]: #{req.image}"
 
   console.log "Configuring model: #{req.model}"
   await setModel(req.model)
@@ -261,8 +311,8 @@ diffusion = (req) ->
   startTime = +new Date()
   if imageBuffer?
     console.log "img2img[#{imageBuffer.length}]: #{req.prompt}"
-    fs.writeFileSync("curious.html", "<img src=\"data:image/png;base64," + imageBuffer.toString('base64') + "\">")
-    result = await img2img(imageBuffer, req.prompt)
+    # fs.writeFileSync("curious.html", "<img src=\"data:#{imageType};base64," + imageBuffer.toString('base64') + "\">")
+    result = await img2img(imageType, imageBuffer, req.prompt)
   else
     console.log "txt2img: #{req.prompt}"
     result = await txt2img(req.prompt)
